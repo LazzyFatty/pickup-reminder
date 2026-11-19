@@ -27,7 +27,7 @@ gh secret set ANDROID_KEYSTORE_PASSWORD --env release-signing --repo LazzyFatty/
 
 配置后到 **Actions → Build and sign APK → Run workflow** 选择 `main`。流程会核对生成包的证书指纹，首次成功后自动发布当前版本。
 
-以后发布新版本时，在 `app/build.gradle` 中提高 `versionName` 和 `versionCode`，再推送到 `main`。例如 `versionName '1.1.2'` 会创建 `v1.1.2` 标签和 Release。标签指向通过验签的提交。相同版本的后续提交仍会生成 Actions 产物，现有 Release 保留原来的 APK 和源码。
+以后发布新版本时，在 `app/build.gradle` 中提高 `versionName` 和 `versionCode`，并在 `docs/releases/v<版本号>.md` 写明本版更新，再推送到 `main`。例如 `versionName '1.1.2'` 对应 `docs/releases/v1.1.2.md`。首次成功后自动创建指向验签提交的标签，Release 正文使用该文件，上传附件只有正式签名 APK。相同版本的后续提交仍会生成 Actions 产物，现有 Release 保留原来的 APK 和源码。
 
 ## 本地打包
 

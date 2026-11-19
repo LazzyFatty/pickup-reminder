@@ -91,7 +91,6 @@ jobs:
           fi
           printf 'channel=%s\nversion=%s\nversion_code=%s\nartifact=%s\n' "$channel" "$version" "$version_code" "$artifact" >> "$GITHUB_OUTPUT"
           (cd apk && sha256sum "$apk" > SHA256SUMS.txt)
-          cp LICENSE docs/third-party.txt apk/
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: ${{ steps.sign.outputs.artifact }}
@@ -108,6 +107,9 @@ jobs:
       actions: read
       contents: write
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
       - name: Publish a new version to GitHub Releases
         shell: bash
         env:
@@ -129,9 +131,15 @@ jobs:
             exit 1
           fi
 
-          if latest=$(gh api "repos/$GH_REPO/releases/latest" --jq .body 2>&1); then
-            latest_code=$(sed -n 's/^Android versionCode: \([0-9][0-9]*\)\..*/\1/p' <<< "$latest")
-            if [[ "$latest_code" =~ ^[1-9][0-9]*$ ]] && (( VERSION_CODE <= latest_code )); then
+          if latest=$(gh api "repos/$GH_REPO/releases/latest" --jq .tag_name 2>&1); then
+            latest_gradle=$(gh api --method GET "repos/$GH_REPO/contents/app/build.gradle" \
+              -f "ref=$latest" --jq .content | base64 --decode)
+            latest_code=$(sed -nE 's/^[[:space:]]*versionCode[[:space:]]+([1-9][0-9]*)[[:space:]]*$/\1/p' <<< "$latest_gradle")
+            if [[ ! "$latest_code" =~ ^[1-9][0-9]*$ ]]; then
+              echo "::error::Could not read versionCode for $latest."
+              exit 1
+            fi
+            if (( VERSION_CODE <= latest_code )); then
               echo "::error::Increase versionCode above $latest_code before publishing $tag."
               exit 1
             fi
@@ -140,6 +148,11 @@ jobs:
             exit 1
           fi
 
+          notes="docs/releases/$tag.md"
+          if [[ ! -f "$notes" ]] || ! grep -q '[^[:space:]]' "$notes"; then
+            echo "::error::Write the changes for $tag in $notes before publishing."
+            exit 1
+          fi
           gh run download "$GITHUB_RUN_ID" --name pickup-release --dir apk
           (cd apk && sha256sum --check SHA256SUMS.txt)
           if tagged=$(gh api "repos/$GH_REPO/git/ref/tags/$tag" --jq .object.sha 2>&1); then
@@ -155,5 +168,4 @@ jobs:
           fi
 
           gh release create "$tag" --verify-tag --title "取件提醒 $VERSION" \
-            --notes "Android versionCode: $VERSION_CODE. 请下载已签名 APK。源码见本页 Source code，第三方许可随包提供。" \
-            apk/pickup-release.apk apk/SHA256SUMS.txt apk/LICENSE apk/third-party.txt
+            --notes-file "$notes" apk/pickup-release.apk
