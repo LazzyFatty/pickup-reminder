@@ -45,6 +45,7 @@ jobs:
           tools="$ANDROID_HOME/build-tools/34.0.0"
           unsigned="app/build/outputs/apk/release/app-release-unsigned.apk"
           channel=test
+          artifact="pickup-${GITHUB_SHA:0:7}"
           if [[ -n "$ANDROID_KEYSTORE_BASE64" || -n "$ANDROID_KEYSTORE_PASSWORD" ]]; then
             if [[ -z "$ANDROID_KEYSTORE_BASE64" || -z "$ANDROID_KEYSTORE_PASSWORD" ]]; then
               echo "::error::Both release-signing secrets must be set."
@@ -52,6 +53,7 @@ jobs:
             fi
             printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$work/key.p12"
             channel=release
+            artifact=pickup-release
           else
             # shortcut: temporary certificates cannot upgrade earlier test APKs, use the release key for updates
             export ANDROID_KEYSTORE_PASSWORD=android
@@ -62,7 +64,7 @@ jobs:
           unset ANDROID_KEYSTORE_BASE64
 
           mkdir apk
-          apk="pickup-reminder-$channel.apk"
+          apk="$artifact.apk"
           "$tools/zipalign" -f 4 "$unsigned" "$work/aligned.apk"
           "$tools/apksigner" sign --ks "$work/key.p12" --ks-key-alias pickup \
             --ks-pass env:ANDROID_KEYSTORE_PASSWORD --v4-signing-enabled false \
@@ -87,12 +89,12 @@ jobs:
             echo "::error::APK version metadata is invalid."
             exit 1
           fi
-          printf 'channel=%s\nversion=%s\nversion_code=%s\n' "$channel" "$version" "$version_code" >> "$GITHUB_OUTPUT"
+          printf 'channel=%s\nversion=%s\nversion_code=%s\nartifact=%s\n' "$channel" "$version" "$version_code" "$artifact" >> "$GITHUB_OUTPUT"
           (cd apk && sha256sum "$apk" > SHA256SUMS.txt)
           cp LICENSE docs/third-party.txt apk/
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
-          name: pickup-reminder-${{ steps.sign.outputs.channel }}
+          name: ${{ steps.sign.outputs.artifact }}
           path: apk/
           if-no-files-found: error
 
@@ -138,7 +140,7 @@ jobs:
             exit 1
           fi
 
-          gh run download "$GITHUB_RUN_ID" --name pickup-reminder-release --dir apk
+          gh run download "$GITHUB_RUN_ID" --name pickup-release --dir apk
           (cd apk && sha256sum --check SHA256SUMS.txt)
           if tagged=$(gh api "repos/$GH_REPO/git/ref/tags/$tag" --jq .object.sha 2>&1); then
             if [[ "$tagged" != "$GITHUB_SHA" ]]; then
@@ -154,4 +156,4 @@ jobs:
 
           gh release create "$tag" --verify-tag --title "取件提醒 $VERSION" \
             --notes "Android versionCode: $VERSION_CODE. 请下载已签名 APK。源码见本页 Source code，第三方许可随包提供。" \
-            apk/pickup-reminder-release.apk apk/SHA256SUMS.txt apk/LICENSE apk/third-party.txt
+            apk/pickup-release.apk apk/SHA256SUMS.txt apk/LICENSE apk/third-party.txt

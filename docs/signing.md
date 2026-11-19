@@ -4,8 +4,8 @@
 
 每次推送分支时会自动打包，也可以进入 [Actions](https://github.com/LazzyFatty/pickup-reminder/actions) 手动运行 **Build and sign APK**。打开对应提交的成功运行，在 **Artifacts** 下载压缩包。
 
-- `pickup-reminder-test.apk` 由该次运行的临时密钥签名，只用于测试。重新安装另一份测试包时，通常需要先卸载旧包。卸载会删除应用里的取件记录。
-- `pickup-reminder-release.apk` 使用原正式密钥签名。覆盖安装要求证书与手机内版本一致，且 `versionCode` 不低于手机内版本。
+- `pickup-<短提交号>.apk` 是测试包，例如 `pickup-8fa738e.apk`。文件名取本次构建提交的前 7 位。测试包使用临时密钥签名，重新安装另一份测试包时，通常需要先卸载旧包。卸载会删除应用里的取件记录。
+- `pickup-release.apk` 使用原正式密钥签名。覆盖安装要求证书与手机内版本一致，且 `versionCode` 不低于手机内版本。
 
 下载包内的 `SHA256SUMS.txt` 可用于检查 APK 是否完整。对应源码是 Actions 运行页关联的提交。
 
@@ -36,9 +36,9 @@ gh secret set ANDROID_KEYSTORE_PASSWORD --env release-signing --repo LazzyFatty/
 ```sh
 ./gradlew :app:assembleRelease :app:parserCheck :app:lintRelease
 zipalign -f 4 app/build/outputs/apk/release/app-release-unsigned.apk pickup-aligned.apk
-apksigner sign --ks /path/to/pickup-release.p12 --ks-key-alias pickup --out pickup-reminder-release.apk pickup-aligned.apk
-apksigner verify --print-certs pickup-reminder-release.apk
-zipalign -c 4 pickup-reminder-release.apk
+apksigner sign --ks /path/to/pickup-release.p12 --ks-key-alias pickup --out pickup-release.apk pickup-aligned.apk
+apksigner verify --print-certs pickup-release.apk
+zipalign -c 4 pickup-release.apk
 ```
 
 `apksigner` 会提示输入原密钥库密码。向手机覆盖安装前，可核对 APK 的签名证书 SHA-256 指纹。首次构建自己的分发版本，可用 `keytool` 建立自己的密钥库，并单独备份密钥与密码。
