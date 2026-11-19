@@ -1,0 +1,9 @@
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent" android:layout_height="match_parent"
+    android:orientation="vertical" android:padding="16dp" android:background="@drawable/widget_background">
+    <TextView android:id="@+id/widget_count" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="@string/widget_initial_count" android:textSize="20sp" android:fontFamily="sans-serif-medium" android:textColor="@color/on_surface" android:drawableStart="@drawable/ic_package" android:drawableTint="@color/primary" android:drawablePadding="8dp" android:gravity="center_vertical" android:paddingBottom="8dp" />
+    <FrameLayout android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1">
+        <GridView android:id="@+id/widget_list" android:layout_width="match_parent" android:layout_height="match_parent" android:numColumns="1" android:horizontalSpacing="8dp" android:verticalSpacing="8dp" android:stretchMode="columnWidth" />
+        <TextView android:id="@+id/widget_empty" android:layout_width="match_parent" android:layout_height="match_parent" android:gravity="center" android:text="@string/widget_empty" android:textColor="@color/on_surface_variant" android:textSize="14sp" />
+    </FrameLayout>
+</LinearLayout>

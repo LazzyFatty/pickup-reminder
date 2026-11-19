@@ -1,0 +1,5 @@
+<resources>
+    <string name="widget_description">待取包裹数量与取件码列表</string>
+    <string name="widget_initial_count">0 个待取</string>
+    <string name="widget_empty">没有待取包裹</string>
+</resources>

@@ -1,0 +1,154 @@
+name: Build and sign APK
+
+on:
+  push:
+    branches: ['**']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    environment: ${{ github.ref == 'refs/heads/main' && 'release-signing' || 'test-build' }}
+    outputs:
+      channel: ${{ steps.sign.outputs.channel }}
+      version: ${{ steps.sign.outputs.version }}
+      version_code: ${{ steps.sign.outputs.version_code }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Install Android SDK components
+        run: sdkmanager --install 'platforms;android-35' 'build-tools;34.0.0'
+      - name: Build and check the APK
+        run: ./gradlew --no-daemon :app:assembleRelease :app:parserCheck :app:lintRelease
+      - name: Sign and verify the APK
+        id: sign
+        shell: bash
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ github.ref == 'refs/heads/main' && secrets.ANDROID_KEYSTORE_BASE64 || '' }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ github.ref == 'refs/heads/main' && secrets.ANDROID_KEYSTORE_PASSWORD || '' }}
+        run: |
+          umask 077
+          work=$(mktemp -d)
+          trap 'rm -rf -- "$work"' EXIT
+          tools="$ANDROID_HOME/build-tools/34.0.0"
+          unsigned="app/build/outputs/apk/release/app-release-unsigned.apk"
+          channel=test
+          if [[ -n "$ANDROID_KEYSTORE_BASE64" || -n "$ANDROID_KEYSTORE_PASSWORD" ]]; then
+            if [[ -z "$ANDROID_KEYSTORE_BASE64" || -z "$ANDROID_KEYSTORE_PASSWORD" ]]; then
+              echo "::error::Both release-signing secrets must be set."
+              exit 1
+            fi
+            printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$work/key.p12"
+            channel=release
+          else
+            # shortcut: temporary certificates cannot upgrade earlier test APKs, use the release key for updates
+            export ANDROID_KEYSTORE_PASSWORD=android
+            keytool -genkeypair -keystore "$work/key.p12" -storetype PKCS12 \
+              -storepass:env ANDROID_KEYSTORE_PASSWORD -alias pickup -keyalg RSA -keysize 2048 \
+              -validity 365 -dname 'CN=Pickup Reminder CI Test'
+          fi
+          unset ANDROID_KEYSTORE_BASE64
+
+          mkdir apk
+          apk="pickup-reminder-$channel.apk"
+          "$tools/zipalign" -f 4 "$unsigned" "$work/aligned.apk"
+          "$tools/apksigner" sign --ks "$work/key.p12" --ks-key-alias pickup \
+            --ks-pass env:ANDROID_KEYSTORE_PASSWORD --v4-signing-enabled false \
+            --out "apk/$apk" "$work/aligned.apk"
+          unset ANDROID_KEYSTORE_PASSWORD
+
+          signature=$("$tools/apksigner" verify --verbose --print-certs "apk/$apk")
+          printf '%s\n' "$signature"
+          if [[ "$channel" == release ]]; then
+            expected=4068d40e0d0037d35e0d410090c93003b47069f4a5a0d94c2806ffe31bc0f953
+            if ! grep -Fxq "Signer #1 certificate SHA-256 digest: $expected" <<< "$signature"; then
+              echo "::error::The release APK certificate does not match the installed release series."
+              exit 1
+            fi
+          fi
+          "$tools/zipalign" -c 4 "apk/$apk"
+
+          badging=$("$tools/aapt" dump badging "apk/$apk")
+          version=$(sed -n "s/^package:.* versionName='\([^']*\)'.*/\1/p" <<< "$badging")
+          version_code=$(sed -n "s/^package:.* versionCode='\([^']*\)'.*/\1/p" <<< "$badging")
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ || ! "$version_code" =~ ^[1-9][0-9]*$ ]]; then
+            echo "::error::APK version metadata is invalid."
+            exit 1
+          fi
+          printf 'channel=%s\nversion=%s\nversion_code=%s\n' "$channel" "$version" "$version_code" >> "$GITHUB_OUTPUT"
+          (cd apk && sha256sum "$apk" > SHA256SUMS.txt)
+          cp LICENSE docs/third-party.txt apk/
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: pickup-reminder-${{ steps.sign.outputs.channel }}
+          path: apk/
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    if: github.ref == 'refs/heads/main' && needs.build.outputs.channel == 'release'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    concurrency: pickup-reminder-releases
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - name: Publish a new version to GitHub Releases
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          VERSION: ${{ needs.build.outputs.version }}
+          VERSION_CODE: ${{ needs.build.outputs.version_code }}
+        run: |
+          tag="v$VERSION"
+          if published=$(gh api "repos/$GH_REPO/releases/tags/$tag" --jq 'if .draft then "draft" else .html_url end' 2>&1); then
+            if [[ "$published" == draft ]]; then
+              echo "::error::$tag is a draft. Review it before retrying publication."
+              exit 1
+            fi
+            echo "Already published: $published"
+            exit 0
+          elif [[ "$published" != *'HTTP 404'* ]]; then
+            printf '%s\n' "$published" >&2
+            exit 1
+          fi
+
+          if latest=$(gh api "repos/$GH_REPO/releases/latest" --jq .body 2>&1); then
+            latest_code=$(sed -n 's/^Android versionCode: \([0-9][0-9]*\)\..*/\1/p' <<< "$latest")
+            if [[ "$latest_code" =~ ^[1-9][0-9]*$ ]] && (( VERSION_CODE <= latest_code )); then
+              echo "::error::Increase versionCode above $latest_code before publishing $tag."
+              exit 1
+            fi
+          elif [[ "$latest" != *'HTTP 404'* ]]; then
+            printf '%s\n' "$latest" >&2
+            exit 1
+          fi
+
+          gh run download "$GITHUB_RUN_ID" --name pickup-reminder-release --dir apk
+          (cd apk && sha256sum --check SHA256SUMS.txt)
+          if tagged=$(gh api "repos/$GH_REPO/git/ref/tags/$tag" --jq .object.sha 2>&1); then
+            if [[ "$tagged" != "$GITHUB_SHA" ]]; then
+              echo "::error::$tag already points to another commit."
+              exit 1
+            fi
+          elif [[ "$tagged" == *'HTTP 404'* ]]; then
+            gh api --method POST "repos/$GH_REPO/git/refs" -f "ref=refs/tags/$tag" -f "sha=$GITHUB_SHA" --silent
+          else
+            printf '%s\n' "$tagged" >&2
+            exit 1
+          fi
+
+          gh release create "$tag" --verify-tag --title "取件提醒 $VERSION" \
+            --notes "Android versionCode: $VERSION_CODE. 请下载已签名 APK。源码见本页 Source code，第三方许可随包提供。" \
+            apk/pickup-reminder-release.apk apk/SHA256SUMS.txt apk/LICENSE apk/third-party.txt

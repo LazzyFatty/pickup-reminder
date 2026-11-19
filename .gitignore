@@ -1,0 +1,17 @@
+.gradle/
+**/build/
+.tooling/
+.reference/
+local.properties
+signing.properties
+*.jks
+*.keystore
+*.p12
+*.pfx
+*.apk
+*.apk.idsig
+.signing/
+dist/
+.idea/
+/签名打包指南.md
+/验证记录*.md
