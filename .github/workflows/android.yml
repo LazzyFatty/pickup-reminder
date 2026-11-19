@@ -25,8 +25,11 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-      - name: Install Android SDK components
-        run: sdkmanager --install 'platforms;android-35' 'build-tools;34.0.0'
+      - name: Ensure Android SDK components are available
+        run: |
+          if [[ ! -r "$ANDROID_HOME/platforms/android-35/android.jar" || ! -x "$ANDROID_HOME/build-tools/34.0.0/apksigner" ]]; then
+            "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install 'platforms;android-35' 'build-tools;34.0.0'
+          fi
       - name: Build and check the APK
         run: ./gradlew --no-daemon :app:assembleRelease :app:parserCheck :app:lintRelease
       - name: Sign and verify the APK
